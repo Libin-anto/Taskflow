@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TaskFlow - Smart Task Manager</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // Main Application
+    function TaskFlowApp() {
+      const [taskList, setTaskList] = useState([]);
+      const [viewMode, setViewMode] = useState('grid');
+      const [activeFilter, setActiveFilter] = useState('all');
+      const [searchQuery, setSearchQuery] = useState('');
+      const [themeMode, setThemeMode] = useState('light');
+      const [showConfetti, setShowConfetti] = useState(false);
+      const [activeSection, setActiveSection] = useState('dashboard');
+
+      // Load from localStorage
+      useEffect(() => {
+        const stored = localStorage.getItem('taskflow-data');
+        if (stored) {
+          setTaskList(JSON.parse(stored));
+        }
+      }, []);
+
+      // Save to localStorage
+      useEffect(() => {
+        localStorage.setItem('taskflow-data', JSON.stringify(taskList));
+      }, [taskList]);
+
+      // Create new task
+      const createTask = (taskData) => {
+        const newTask = {
+          id: `task-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          title: taskData.title,
+          description: taskData.description || '',
+          isDone: false,
+          importance: taskData.importance || 'normal',
+          category: taskData.category || 'personal',
+          dueDate: taskData.dueDate || null,
+          createdTime: new Date().toISOString(),
+          tags: taskData.tags || []
+        };
+        setTaskList([newTask, ...taskList]);
+      };
+
+      // Remove task
+      const removeTask = (taskId) => {
+        setTaskList(taskList.filter(t => t.id !== taskId));
+      };
+
+      // Mark as complete/incomplete
+      const toggleComplete = (taskId) => {
+        setTaskList(taskList.map(t => {
+          if (t.id === taskId) {
+            const updated = { ...t, isDone: !t.isDone };
+            if (updated.isDone && !showConfetti) {
+              setShowConfetti(true);
+              setTimeout(() => setShowConfetti(false), 3000);
+            }
+            return updated;
+          }
+          return t;
+        }));
+      };
+
+      // Modify task
+      const modifyTask = (taskId, updates) => {
+        setTaskList(taskList.map(t => 
+          t.id === taskId ? { ...t, ...updates } : t
+        ));
+      };
+
+      // Delete all completed
+      const clearFinished = () => {
+        setTaskList(taskList.filter(t => !t.isDone));
+      };
+
+      // Filter and search logic
+      const getFilteredTasks = () => {
+        let result = [...taskList];
+
+        if (activeFilter === 'pending') {
+          result = result.filter(t => !t.isDone);
+        } else if (activeFilter === 'done') {
+          result = result.filter(t => t.isDone);
+        } else if (activeFilter === 'urgent') {
+          result = result.filter(t => t.importance === 'urgent');
+        }
+
+        if (searchQuery.trim()) {
+          const query = searchQuery.toLowerCase();
+          result = result.filter(t => 
+            t.title.toLowerCase().includes(query) ||
+            t.description.toLowerCase().includes(query) ||
+            t.tags.some(tag => tag.toLowerCase().includes(query))
+          );
+        }
+
+        return result;
+      };
+
+      const filteredTasks = getFilteredTasks();
+
+      // Calculate metrics
+      const metrics = {
+        totalCount: taskList.length,
+        pendingCount: taskList.filter(t => !t.isDone).length,
+        completedCount: taskList.filter(t => t.isDone).length,
+        urgentCount: taskList.filter(t => t.importance === 'urgent' && !t.isDone).length,
+        completionRate: taskList.length > 0 
+          ? Math.round((taskList.filter(t => t.isDone).length / taskList.length) * 100) 
+          : 0
+      };
+
+      return (
+        <div className={`app-wrapper ${themeMode}`}>
+          {showConfetti && <ConfettiEffect />}
+          
+          {/* Sidebar Navigation */}
+          <Sidebar 
+            activeSection={activeSection}
+            setActiveSection={setActiveSection}
+            metrics={metrics}
+            themeMode={themeMode}
+            setThemeMode={setThemeMode}
+          />
+
+          {/* Main Content Area */}
+          <div className="main-area">
+            {/* Top Header */}
+            <TopHeader 
+              activeSection={activeSection}
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
+            />
+
+            {/* Content Sections */}
+            <div className="content-wrapper">
+              {activeSection === 'dashboard' && (
+                <DashboardSection 
+                  metrics={metrics}
+                  taskList={taskList}
+                  onToggleComplete={toggleComplete}
+                />
+              )}
+
+              {activeSection === 'tasks' && (
+                <TasksSection
+                  tasks={filteredTasks}
+                  viewMode={viewMode}
+                  setViewMode={setViewMode}
+                  activeFilter={activeFilter}
+                  setActiveFilter={setActiveFilter}
+                  onToggleComplete={toggleComplete}
+                  onRemoveTask={removeTask}
+                  onModifyTask={modifyTask}
+                  onClearFinished={clearFinished}
+                  hasCompleted={metrics.completedCount > 0}
+                />
+              )}
+
+              {activeSection === 'create' && (
+                <CreateSection onCreateTask={createTask} />
+              )}
+
+              {activeSection === 'analytics' && (
+                <AnalyticsSection 
+                  metrics={metrics}
+                  taskList={taskList}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Sidebar Component
+    function Sidebar({ activeSection, setActiveSection, metrics, themeMode, setThemeMode }) {
+      const [currentTime, setCurrentTime] = useState(new Date());
+
+      useEffect(() => {
+        const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+        return () => clearInterval(timer);
+      }, []);
+
+      const menuItems = [
+        { id: 'dashboard', icon: '📊', label: 'Dashboard' },
+        { id: 'tasks', icon: '✓', label: 'My Tasks', badge: metrics.pendingCount },
+        { id: 'create', icon: '➕', label: 'Create Task' },
+        { id: 'analytics', icon: '📈', label: 'Analytics' }
+      ];
+
+      return (
+        <aside className="sidebar">
+          <div className="sidebar-header">
+            <div className="logo">
+              <span className="logo-icon">⚡</span>
+              <span className="logo-text">TaskFlow</span>
+            </div>
+            <div className="clock-widget">
+              <div className="time">{currentTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</div>
+              <div className="date">{currentTime.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
+            </div>
+          </div>
+
+          <nav className="sidebar-nav">
+            {menuItems.map(item => (
+              <button
+                key={item.id}
+                onClick={() => setActiveSection(item.id)}
+                className={`nav-item ${activeSection === item.id ? 'active' : ''}`}
+              >
+                <span className="nav-icon">{item.icon}</span>
+                <span className="nav-label">{item.label}</span>
+                {item.badge > 0 && (
+                  <span className="nav-badge">{item.badge}</span>
+                )}
+              </button>
+            ))}
+          </nav>
+
+          <div className="sidebar-footer">
+            <button 
+              className="theme-btn"
+              onClick={() => setThemeMode(themeMode === 'light' ? 'dark' : 'light')}
+            >
+              <span>{themeMode === 'light' ? '🌙' : '☀️'}</span>
+              <span>{themeMode === 'light' ? 'Dark Mode' : 'Light Mode'}</span>
+            </button>
+          </div>
+        </aside>
+      );
+    }
+
+    // Top Header Component
+    function TopHeader({ activeSection, searchQuery, setSearchQuery }) {
+      const titles = {
+        dashboard: 'Dashboard Overview',
+        tasks: 'My Tasks',
+        create: 'Create New Task',
+        analytics: 'Analytics & Insights'
+      };
+
+      return (
+        <header className="top-header">
+          <div className="header-left">
+            <h1 className="page-title">{titles[activeSection]}</h1>
+            <p className="page-subtitle">Manage your tasks efficiently</p>
+          </div>
+          
+          {activeSection === 'tasks' && (
+            <div className="header-right">
+              <div className="search-container">
+                <span className="search-icon">🔍</span>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search tasks..."
+                  className="search-field"
+                />
+                {searchQuery && (
+                  <button onClick={() => setSearchQuery('')} className="clear-btn">✕</button>
+                )}
+              </div>
+            </div>
+          )}
+        </header>
+      );
+    }
+
+
+    // Dashboard Section
+    function DashboardSection({ metrics, taskList, onToggleComplete }) {
+      const recentTasks = taskList.slice(0, 5);
+      const urgentTasks = taskList.filter(t => t.importance === 'urgent' && !t.isDone);
+
+      return (
+        <div className="dashboard-section">
+          {/* Metrics Cards */}
+          <div className="metrics-grid">
+            <div className="metric-card blue">
+              <div className="metric-header">
+                <span className="metric-icon">📋</span>
+                <span className="metric-trend">+12%</span>
+              </div>
+              <div className="metric-value">{metrics.totalCount}</div>
+              <div className="metric-label">Total Tasks</div>
+            </div>
+
+            <div className="metric-card orange">
+              <div className="metric-header">
+                <span className="metric-icon">⏳</span>
+                <span className="metric-trend">-5%</span>
+              </div>
+              <div className="metric-value">{metrics.pendingCount}</div>
+              <div className="metric-label">Pending</div>
+            </div>
+
+            <div className="metric-card green">
+              <div className="metric-header">
+                <span className="metric-icon">✅</span>
+                <span className="metric-trend">+8%</span>
+              </div>
+              <div className="metric-value">{metrics.completedCount}</div>
+              <div className="metric-label">Completed</div>
+            </div>
+
+            <div className="metric-card purple">
+              <div className="metric-header">
+                <span className="metric-icon">📈</span>
+                <span className="metric-trend">{metrics.completionRate}%</span>
+              </div>
+              <div className="metric-value">{metrics.urgentCount}</div>
+              <div className="metric-label">Urgent Tasks</div>
+            </div>
+          </div>
+
+          {/* Two Column Layout */}
+          <div className="dashboard-grid">
+            {/* Recent Tasks */}
+            <div className="dashboard-card">
+              <div className="card-header">
+                <h3>Recent Tasks</h3>
+                <span className="card-badge">{recentTasks.length}</span>
+              </div>
+              <div className="task-list-compact">
+                {recentTasks.length > 0 ? (
+                  recentTasks.map(task => (
+                    <div key={task.id} className="compact-task">
+                      <button
+                        onClick={() => onToggleComplete(task.id)}
+                        className={`compact-checkbox ${task.isDone ? 'checked' : ''}`}
+                      >
+                        {task.isDone && '✓'}
+                      </button>
+                      <div className="compact-info">
+                        <div className={`compact-title ${task.isDone ? 'done' : ''}`}>
+                          {task.title}
+                        </div>
+                        <div className="compact-meta">
+                          <span>{task.importance === 'urgent' ? '🔴' : task.importance === 'high' ? '🟠' : '🟡'}</span>
+                          <span>{new Date(task.createdTime).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="empty-compact">No tasks yet</div>
+                )}
+              </div>
+            </div>
+
+            {/* Urgent Tasks */}
+            <div className="dashboard-card urgent-card">
+              <div className="card-header">
+                <h3>Urgent Tasks</h3>
+                <span className="card-badge urgent">{urgentTasks.length}</span>
+              </div>
+              <div className="task-list-compact">
+                {urgentTasks.length > 0 ? (
+                  urgentTasks.map(task => (
+                    <div key={task.id} className="compact-task urgent">
+                      <button
+                        onClick={() => onToggleComplete(task.id)}
+                        className="compact-checkbox"
+                      >
+                        {task.isDone && '✓'}
+                      </button>
+                      <div className="compact-info">
+                        <div className="compact-title">{task.title}</div>
+                        <div className="compact-meta">
+                          <span>🔥 High Priority</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="empty-compact">No urgent tasks 🎉</div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Progress Section */}
+          <div className="progress-section">
+            <h3>Overall Progress</h3>
+            <div className="progress-bar-large">
+              <div 
+                className="progress-fill"
+                style={{ width: `${metrics.completionRate}%` }}
+              >
+                <span className="progress-text">{metrics.completionRate}%</span>
+              </div>
+            </div>
+            <div className="progress-stats">
+              <span>{metrics.completedCount} completed</span>
+              <span>{metrics.pendingCount} remaining</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Tasks Section
+    function TasksSection({ 
+      tasks, 
+      viewMode, 
+      setViewMode, 
+      activeFilter, 
+      setActiveFilter,
+      onToggleComplete,
+      onRemoveTask,
+      onModifyTask,
+      onClearFinished,
+      hasCompleted
+    }) {
+      return (
+        <div className="tasks-section">
+          {/* Filter Bar */}
+          <div className="filter-bar">
+            <div className="filter-group">
+              <button
+                onClick={() => setActiveFilter('all')}
+                className={`filter-chip ${activeFilter === 'all' ? 'active' : ''}`}
+              >
+                All Tasks
+              </button>
+              <button
+                onClick={() => setActiveFilter('pending')}
+                className={`filter-chip ${activeFilter === 'pending' ? 'active' : ''}`}
+              >
+                Pending
+              </button>
+              <button
+                onClick={() => setActiveFilter('done')}
+                className={`filter-chip ${activeFilter === 'done' ? 'active' : ''}`}
+              >
+                Completed
+              </button>
+              <button
+                onClick={() => setActiveFilter('urgent')}
+                className={`filter-chip ${activeFilter === 'urgent' ? 'active' : ''}`}
+              >
+                Urgent
+              </button>
+            </div>
+
+            <div className="view-group">
+              <button
+                onClick={() => setViewMode('grid')}
+                className={`view-toggle ${viewMode === 'grid' ? 'active' : ''}`}
+              >
+                ⊞
+              </button>
+              <button
+                onClick={() => setViewMode('list')}
+                className={`view-toggle ${viewMode === 'list' ? 'active' : ''}`}
+              >
+                ☰
+              </button>
+              {hasCompleted && (
+                <button onClick={onClearFinished} className="clear-btn-action">
+                  Clear Completed
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Tasks Display */}
+          <div className={`tasks-grid ${viewMode}`}>
+            {tasks.length > 0 ? (
+              tasks.map(task => (
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  onToggleComplete={onToggleComplete}
+                  onRemoveTask={onRemoveTask}
+                  onModifyTask={onModifyTask}
+                />
+              ))
+            ) : (
+              <div className="empty-state-large">
+                <div className="empty-icon">📭</div>
+                <h3>No tasks found</h3>
+                <p>Try adjusting your filters or create a new task</p>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // Task Card Component
+    function TaskCard({ task, onToggleComplete, onRemoveTask, onModifyTask }) {
+      const [isEditing, setIsEditing] = useState(false);
+      const [editTitle, setEditTitle] = useState(task.title);
+      const [editDescription, setEditDescription] = useState(task.description);
+
+      const priorityColors = {
+        low: '#10b981',
+        normal: '#f59e0b',
+        high: '#f97316',
+        urgent: '#ef4444'
+      };
+
+      const categoryIcons = {
+        personal: '👤',
+        work: '💼',
+        shopping: '🛒',
+        health: '💪',
+        learning: '📚'
+      };
+
+      const handleSave = () => {
+        if (editTitle.trim()) {
+          onModifyTask(task.id, {
+            title: editTitle.trim(),
+            description: editDescription.trim()
+          });
+          setIsEditing(false);
+        }
+      };
+
+      const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && !task.isDone;
+
+      return (
+        <div className={`task-card-new ${task.isDone ? 'completed' : ''} ${isOverdue ? 'overdue' : ''}`}>
+          <div className="task-card-header">
+            <button
+              onClick={() => onToggleComplete(task.id)}
+              className={`task-checkbox ${task.isDone ? 'checked' : ''}`}
+            >
+              {task.isDone && '✓'}
+            </button>
+            <div className="task-badges">
+              <span className="category-badge">{categoryIcons[task.category]}</span>
+              <span 
+                className="priority-dot"
+                style={{ backgroundColor: priorityColors[task.importance] }}
+              />
+            </div>
+          </div>
+
+          {isEditing ? (
+            <div className="edit-form">
+              <input
+                type="text"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                className="edit-title-input"
+              />
+              <textarea
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+                className="edit-desc-input"
+                rows="2"
+              />
+              <div className="edit-actions">
+                <button onClick={handleSave} className="save-btn">Save</button>
+                <button onClick={() => setIsEditing(false)} className="cancel-btn">Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <div className="task-card-body">
+              <h4 className="task-card-title">{task.title}</h4>
+              {task.description && (
+                <p className="task-card-desc">{task.description}</p>
+              )}
+              
+              {task.tags.length > 0 && (
+                <div className="task-tags-row">
+                  {task.tags.map(tag => (
+                    <span key={tag} className="task-tag-pill">#{tag}</span>
+                  ))}
+                </div>
+              )}
+
+              <div className="task-card-footer">
+                <div className="task-date">
+                  {task.dueDate ? (
+                    <span className={isOverdue ? 'overdue-text' : ''}>
+                      📅 {new Date(task.dueDate).toLocaleDateString()}
+                    </span>
+                  ) : (
+                    <span>🕐 {new Date(task.createdTime).toLocaleDateString()}</span>
+                  )}
+                </div>
+                <div className="task-actions-row">
+                  <button onClick={() => setIsEditing(true)} className="action-icon">✏️</button>
+                  <button onClick={() => onRemoveTask(task.id)} className="action-icon">🗑️</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+
+    // Create Section
+    function CreateSection({ onCreateTask }) {
+      const [formData, setFormData] = useState({
+        title: '',
+        description: '',
+        importance: 'normal',
+        category: 'personal',
+        dueDate: '',
+        tags: []
+      });
+      const [tagInput, setTagInput] = useState('');
+      const [error, setError] = useState('');
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        
+        if (!formData.title.trim()) {
+          setError('Task title is required');
+          return;
+        }
+
+        if (formData.title.trim().length < 3) {
+          setError('Title must be at least 3 characters');
+          return;
+        }
+
+        onCreateTask(formData);
+        setFormData({
+          title: '',
+          description: '',
+          importance: 'normal',
+          category: 'personal',
+          dueDate: '',
+          tags: []
+        });
+        setError('');
+      };
+
+      const addTag = () => {
+        if (tagInput.trim() && !formData.tags.includes(tagInput.trim())) {
+          setFormData({
+            ...formData,
+            tags: [...formData.tags, tagInput.trim()]
+          });
+          setTagInput('');
+        }
+      };
+
+      const removeTag = (tag) => {
+        setFormData({
+          ...formData,
+          tags: formData.tags.filter(t => t !== tag)
+        });
+      };
+
+      return (
+        <div className="create-section">
+          <div className="create-container">
+            <div className="create-header">
+              <h2>Create New Task</h2>
+              <p>Fill in the details to create a new task</p>
+            </div>
+
+            <form onSubmit={handleSubmit} className="create-form">
+              <div className="form-section">
+                <label className="form-label">Task Title *</label>
+                <input
+                  type="text"
+                  value={formData.title}
+                  onChange={(e) => {
+                    setFormData({ ...formData, title: e.target.value });
+                    setError('');
+                  }}
+                  placeholder="Enter task title..."
+                  className="form-control"
+                />
+              </div>
+
+              <div className="form-section">
+                <label className="form-label">Description</label>
+                <textarea
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  placeholder="Add task description (optional)"
+                  className="form-control"
+                  rows="4"
+                />
+              </div>
+
+              <div className="form-row-grid">
+                <div className="form-section">
+                  <label className="form-label">Priority Level</label>
+                  <select
+                    value={formData.importance}
+                    onChange={(e) => setFormData({ ...formData, importance: e.target.value })}
+                    className="form-control"
+                  >
+                    <option value="low">🟢 Low Priority</option>
+                    <option value="normal">🟡 Normal Priority</option>
+                    <option value="high">🟠 High Priority</option>
+                    <option value="urgent">🔴 Urgent</option>
+                  </select>
+                </div>
+
+                <div className="form-section">
+                  <label className="form-label">Category</label>
+                  <select
+                    value={formData.category}
+                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                    className="form-control"
+                  >
+                    <option value="personal">👤 Personal</option>
+                    <option value="work">💼 Work</option>
+                    <option value="shopping">🛒 Shopping</option>
+                    <option value="health">💪 Health</option>
+                    <option value="learning">📚 Learning</option>
+                  </select>
+                </div>
+
+                <div className="form-section">
+                  <label className="form-label">Due Date</label>
+                  <input
+                    type="date"
+                    value={formData.dueDate}
+                    onChange={(e) => setFormData({ ...formData, dueDate: e.target.value })}
+                    className="form-control"
+                    min={new Date().toISOString().split('T')[0]}
+                  />
+                </div>
+              </div>
+
+              <div className="form-section">
+                <label className="form-label">Tags</label>
+                <div className="tag-input-group">
+                  <input
+                    type="text"
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addTag())}
+                    placeholder="Add tag..."
+                    className="form-control"
+                  />
+                  <button type="button" onClick={addTag} className="add-tag-button">
+                    Add Tag
+                  </button>
+                </div>
+                {formData.tags.length > 0 && (
+                  <div className="tags-preview">
+                    {formData.tags.map(tag => (
+                      <span key={tag} className="tag-preview-item">
+                        #{tag}
+                        <button type="button" onClick={() => removeTag(tag)}>×</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {error && (
+                <div className="error-alert">⚠️ {error}</div>
+              )}
+
+              <div className="form-actions-row">
+                <button type="submit" className="submit-button">
+                  Create Task
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => setFormData({
+                    title: '',
+                    description: '',
+                    importance: 'normal',
+                    category: 'personal',
+                    dueDate: '',
+                    tags: []
+                  })}
+                  className="reset-button"
+                >
+                  Reset Form
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    // Analytics Section
+    function AnalyticsSection({ metrics, taskList }) {
+      const categoryStats = {
+        personal: taskList.filter(t => t.category === 'personal').length,
+        work: taskList.filter(t => t.category === 'work').length,
+        shopping: taskList.filter(t => t.category === 'shopping').length,
+        health: taskList.filter(t => t.category === 'health').length,
+        learning: taskList.filter(t => t.category === 'learning').length
+      };
+
+      const priorityStats = {
+        low: taskList.filter(t => t.importance === 'low').length,
+        normal: taskList.filter(t => t.importance === 'normal').length,
+        high: taskList.filter(t => t.importance === 'high').length,
+        urgent: taskList.filter(t => t.importance === 'urgent').length
+      };
+
+      return (
+        <div className="analytics-section">
+          <div className="analytics-grid">
+            {/* Category Distribution */}
+            <div className="analytics-card">
+              <h3>Tasks by Category</h3>
+              <div className="stats-list">
+                <div className="stat-item">
+                  <span className="stat-label">👤 Personal</span>
+                  <span className="stat-value">{categoryStats.personal}</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">💼 Work</span>
+                  <span className="stat-value">{categoryStats.work}</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">🛒 Shopping</span>
+                  <span className="stat-value">{categoryStats.shopping}</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">💪 Health</span>
+                  <span className="stat-value">{categoryStats.health}</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">📚 Learning</span>
+                  <span className="stat-value">{categoryStats.learning}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Priority Distribution */}
+            <div className="analytics-card">
+              <h3>Tasks by Priority</h3>
+              <div className="stats-list">
+                <div className="stat-item">
+                  <span className="stat-label">🟢 Low</span>
+                  <span className="stat-value">{priorityStats.low}</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">🟡 Normal</span>
+                  <span className="stat-value">{priorityStats.normal}</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">🟠 High</span>
+                  <span className="stat-value">{priorityStats.high}</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">🔴 Urgent</span>
+                  <span className="stat-value">{priorityStats.urgent}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Completion Stats */}
+            <div className="analytics-card full-width">
+              <h3>Completion Statistics</h3>
+              <div className="completion-visual">
+                <div className="completion-circle">
+                  <svg viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="40" fill="none" stroke="#e2e8f0" strokeWidth="8"/>
+                    <circle 
+                      cx="50" 
+                      cy="50" 
+                      r="40" 
+                      fill="none" 
+                      stroke="#10b981" 
+                      strokeWidth="8"
+                      strokeDasharray={`${metrics.completionRate * 2.51} 251`}
+                      transform="rotate(-90 50 50)"
+                    />
+                  </svg>
+                  <div className="circle-text">{metrics.completionRate}%</div>
+                </div>
+                <div className="completion-details">
+                  <div className="detail-item">
+                    <span className="detail-label">Total Tasks</span>
+                    <span className="detail-value">{metrics.totalCount}</span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="detail-label">Completed</span>
+                    <span className="detail-value green">{metrics.completedCount}</span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="detail-label">Pending</span>
+                    <span className="detail-value orange">{metrics.pendingCount}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Confetti Effect
+    function ConfettiEffect() {
+      return (
+        <div className="confetti-wrapper">
+          {[...Array(50)].map((_, i) => (
+            <div
+              key={i}
+              className="confetti-piece"
+              style={{
+                left: `${Math.random() * 100}%`,
+                animationDelay: `${Math.random() * 3}s`,
+                backgroundColor: ['#ff6b6b', '#4ecdc4', '#45b7d1', '#f9ca24', '#6c5ce7'][Math.floor(Math.random() * 5)]
+              }}
+            />
+          ))}
+        </div>
+      );
+    }
+
+    // Render Application
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<TaskFlowApp />);
+  </script>
+</body>
+</html>
